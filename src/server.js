@@ -32,7 +32,7 @@ const rooms = {};
 const streams = {};
 
 io.on("connect", (socket) => {
-    // /voiceChannel/:roomName
+    // 음성, 화상 채널 관련 코드
     socket.on("join_voice_channel", (roomName) => {
         console.log("join_room : ", roomName);
         if (!rooms[roomName]) {
@@ -175,9 +175,14 @@ io.on("connect", (socket) => {
         }
     );
 
+    // 채팅 채널 관련 코드
     socket.on("join_chat_channel", (roomName) => {
-        console.log("join_chat_channel : ", roomName);
         socket.join(roomName);
+    });
+
+    socket.on("send_message", (message, roomName) => {
+        console.log("send_message : ", message);
+        io.to(roomName).emit("receive_message", message);
     });
 });
 
