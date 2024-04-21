@@ -6,15 +6,14 @@ const wrtc = require("wrtc");
 
 const app = express();
 const server = http.createServer(app);
-
-app.use(cors());
-
 const io = new Server(server, {
     cors: {
         origin: "http://localhost:5173",
-        mathods: ["GET", "POST", "PUT", "DELETE"],
+        methods: ["GET", "POST", "PUT", "DELETE"],
     },
 });
+
+app.use(cors());
 
 const pc_config = {
     iceServers: [
@@ -33,7 +32,9 @@ const rooms = {};
 const streams = {};
 
 io.on("connect", (socket) => {
-    socket.on("join_room", (roomName) => {
+    // /voiceChannel/:roomName
+    socket.on("join_voice_channel", (roomName) => {
+        console.log("join_room : ", roomName);
         if (!rooms[roomName]) {
             rooms[roomName] = {
                 senderPCs: {},
@@ -173,6 +174,11 @@ io.on("connect", (socket) => {
             }
         }
     );
+
+    socket.on("join_chat_channel", (roomName) => {
+        console.log("join_chat_channel : ", roomName);
+        socket.join(roomName);
+    });
 });
 
 server.listen(3003, () => {
