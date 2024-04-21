@@ -177,12 +177,19 @@ io.on("connect", (socket) => {
 
     // 채팅 채널 관련 코드
     socket.on("join_chat_channel", (roomName) => {
+        // DB에서 channel 데이터 가져오기
+        // DB에서 채팅 메시지 데이터 가져오기
+        // 채팅 메시지 소켓으로 보내기
         socket.join(roomName);
     });
 
     socket.on("send_message", (message, roomName) => {
-        console.log("send_message : ", message);
-        io.to(roomName).emit("receive_message", message);
+        socket.to(roomName).emit("receive_message", message);
+        // DB에 채팅 메시지 데이터 저장
+
+        // DB에 채팅 메시지 데이터 수정
+
+        // DB에 채팅 메시지 데이터 삭제
     });
 });
 
