@@ -6,15 +6,14 @@ const wrtc = require("wrtc");
 
 const app = express();
 const server = http.createServer(app);
-
-app.use(cors());
-
 const io = new Server(server, {
     cors: {
         origin: "http://localhost:5173",
-        mathods: ["GET", "POST", "PUT", "DELETE"],
+        methods: ["GET", "POST", "PUT", "DELETE"],
     },
 });
+
+app.use(cors());
 
 const pc_config = {
     iceServers: [
@@ -33,7 +32,9 @@ const rooms = {};
 const streams = {};
 
 io.on("connect", (socket) => {
-    socket.on("join_room", (roomName) => {
+    // 음성, 화상 채널 관련 코드
+    socket.on("join_voice_channel", (roomName) => {
+        console.log("join_room : ", roomName);
         if (!rooms[roomName]) {
             rooms[roomName] = {
                 senderPCs: {},
@@ -173,8 +174,25 @@ io.on("connect", (socket) => {
             }
         }
     );
+
+    // 채팅 채널 관련 코드
+    socket.on("join_chat_channel", (roomName) => {
+        // DB에서 channel 데이터 가져오기
+        // DB에서 채팅 메시지 데이터 가져오기
+        // 채팅 메시지 소켓으로 보내기
+        socket.join(roomName);
+    });
+
+    socket.on("send_message", (message, roomName) => {
+        socket.to(roomName).emit("receive_message", message);
+        // DB에 채팅 메시지 데이터 저장
+
+        // DB에 채팅 메시지 데이터 수정
+
+        // DB에 채팅 메시지 데이터 삭제
+    });
 });
 
-server.listen(3003, () => {
+server.listen(443, () => {
     console.log("SERVER IS RUNNING");
 });
