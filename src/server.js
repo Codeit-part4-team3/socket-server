@@ -3,8 +3,13 @@ const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const wrtc = require("wrtc");
+const AWS = require("aws-sdk");
+const { channel } = require("diagnostics_channel");
 
-// git 배포 테스트 주석
+// .DocumentClient를 사용하면 DynamoDB의 데이터를 쉽게 다룰 수 있다. 자동 직렬화 느낌
+const dynamoDB = new AWS.DynamoDB.DocumentClient({
+    region: "ap-northeast-2",
+});
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -187,6 +192,21 @@ io.on("connect", (socket) => {
     socket.on("send_message", (message, roomName) => {
         socket.to(roomName).emit("receive_message", message);
         // DB에 채팅 메시지 데이터 저장
+        const params = {
+            TableName: "chat",
+            Item: {
+                channel: roomName,
+                message: message,
+                timestamp: Date.now(),
+            },
+        };
+        dynamoDB.put(params, (err, data) => {
+            if (err) {
+                console.error("Error saving message to DynamoDB", err);
+            } else {
+                console.log("Message saved to DynamoDB", data);
+            }
+        });
 
         // DB에 채팅 메시지 데이터 수정
 

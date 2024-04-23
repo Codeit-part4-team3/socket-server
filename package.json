@@ -16,10 +16,11 @@
         "nodemon": "^3.1.0"
     },
     "dependencies": {
+        "aws-sdk": "^2.1604.0",
         "cors": "^2.8.5",
         "express": "^4.19.2",
+        "http": "^0.0.1-security",
         "socket.io": "^4.7.5",
-        "wrtc": "^0.4.7",
-        "http": "^0.0.1-security"
+        "wrtc": "^0.4.7"
     }
 }
