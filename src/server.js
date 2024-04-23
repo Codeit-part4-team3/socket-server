@@ -4,6 +4,7 @@ const cors = require("cors");
 const { Server } = require("socket.io");
 const wrtc = require("wrtc");
 
+// git 배포 테스트 주석
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
