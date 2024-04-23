@@ -193,6 +193,6 @@ io.on("connect", (socket) => {
     });
 });
 
-server.listen(3003, () => {
+server.listen(443, () => {
     console.log("SERVER IS RUNNING");
 });
