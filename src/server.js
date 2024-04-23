@@ -20,6 +20,8 @@ const io = new Server(server, {
 
 app.use(cors());
 
+console.log("connect express");
+
 const pc_config = {
     iceServers: [
         {
@@ -37,6 +39,7 @@ const rooms = {};
 const streams = {};
 
 io.on("connect", (socket) => {
+    console.log("connect socket");
     // 음성, 화상 채널 관련 코드
     socket.on("join_voice_channel", (roomName) => {
         console.log("join_room : ", roomName);
