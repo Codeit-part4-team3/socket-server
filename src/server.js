@@ -25,6 +25,8 @@ app.get("/", (req, res) => {
     res.send("Hello World!");
 });
 
+app.get("/");
+
 console.log("connect express");
 
 const pc_config = {
@@ -207,6 +209,7 @@ io.on("connect", (socket) => {
             updatedAt: Date.now(),
             status: "normal",
         };
+        console.log(newMessage);
 
         const updateParams = {
             // 테이블 이름
@@ -239,6 +242,46 @@ io.on("connect", (socket) => {
                 console.error("Error updating data in DynamoDB:", err);
             } else {
                 console.log("Data updated successfully:", data);
+            }
+        });
+    });
+
+    // update Message
+    socket.on("update_message", (messageId, roomName) => {
+        // update Message
+    });
+
+    // delete Message
+    socket.on("delete_message", (messageId, roomName) => {
+        const deleteParams = {
+            TableName: "chat-message-table",
+            Key: {
+                channelId: roomName,
+            },
+            // 업데이트 작업을 정의한다.
+            // messages 목록 속성에서 ?인덱스 요소를 제거한다
+            UpdateExpression: "REMOVE messages[?]",
+            // 삭제 작업이 수행되기 위해 필요한 조건을 정의한다.
+            // 여기서는 messages 속성이 존재하고 messages 목록에 :messageId가 포함되어 있는지 확인한다.
+            ConditionExpression:
+                "attribute_exists(messages) AND list_contains(messages, :messageId)",
+            // Expression들의 :messageId을 정의한다
+            ExpressionAttributeValues: {
+                ":messageId": messageId,
+            },
+        };
+
+        // delete메서드를 안사용한 이유는 delete는 전체 항목(또는 행)를 삭제하려고 할 때 사용하고
+        // update메서드는 항목 내부의 속성을 업데이트하거나 제거할 때 사용할 수 있기 떄문
+        // 우리는 channelId 내보의 messages 속성에서 특정 메시지를 제거하려고 하기 때문에 update메서드를 사용한다.
+        dynamoDB.update(deleteParams, (err, data) => {
+            if (err) {
+                console.error("Error deleting message from DynamoDB:", err);
+            } else {
+                console.log(
+                    "Message deleted successfully from DynamoDB:",
+                    data
+                );
             }
         });
     });
