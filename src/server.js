@@ -13,12 +13,15 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "https://api.pqsoft.net/",
+        // origin은 정확한 클라이언트 주소여야한다.
+        origin: "https://pqsoft.net",
         methods: ["GET", "POST", "PUT", "DELETE"],
     },
 });
 
-app.use(cors());
+app.get("/", (req, res) => {
+    res.send("Hello World!");
+});
 
 console.log("connect express");
 
@@ -216,6 +219,6 @@ io.on("connect", (socket) => {
     });
 });
 
-server.listen(8080, () => {
+server.listen(3000, () => {
     console.log("SERVER IS RUNNING");
 });
