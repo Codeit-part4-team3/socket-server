@@ -4,10 +4,12 @@ const cors = require("cors");
 const { Server } = require("socket.io");
 const wrtc = require("wrtc");
 const AWS = require("aws-sdk");
+const crypto = require("crypto");
 
 // .DocumentClient를 사용하면 DynamoDB의 데이터를 쉽게 다룰 수 있다. 자동 직렬화 느낌
 const dynamoDB = new AWS.DynamoDB.DocumentClient({
-    region: "ap-northeast-2",
+    // 다이나모DB의 리전을 설정한다
+    region: "us-east-2",
 });
 const app = express();
 const server = http.createServer(app);
@@ -196,28 +198,56 @@ io.on("connect", (socket) => {
 
     socket.on("send_message", (message, roomName) => {
         socket.to(roomName).emit("receive_message", message);
-        // DB에 채팅 메시지 데이터 저장
-        const params = {
-            TableName: "sadasd",
-            Item: {
-                channel: roomName,
-                message: message,
-                timestamp: Date.now(),
-            },
+        // 새로운 메시지를 DynamoDB에 업데이트
+        const newMessage = {
+            messageId: generateMessageId(),
+            userId: "1",
+            message: message,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            status: "normal",
         };
-        dynamoDB.put(params, (err, data) => {
+
+        const updateParams = {
+            // 테이블 이름
+            TableName: "chat-message-table",
+            // channelID을 이용해서 해당 채널의 메시지 리스트에 새로운 메시지를 추가한다.
+            Key: {
+                channelId: roomName,
+            },
+            // updateExpression은 SET으로 업데이트할 데이터를 정의한다.
+            UpdateExpression:
+                // list_append는 DynamoDB에서 제공하는 함수로 리스트에 새로운 요소를 추가한다.
+                // if_not_exists는 DynamoDB에서 제공하는 함수로 해당 속성이 존재하지 않으면
+                // 두 번째 인자로 전달된 값을 사용한다.
+                // :newMessage는 새로운 메시지를 의미한다.
+                "SET messages = list_append(if_not_exists(messages, :emptyList), :newMessage)",
+            // ExpressionAttributeValues는 UpdateExpression에서 사용한 변수들을 정의한다.
+            // :newMessage는 새로운 메시지를 의미한다.
+            // :emptyList는 messages 속성이 존재하지 않을 때 사용할 빈 리스트를 의미한다.
+            ExpressionAttributeValues: {
+                ":newMessage": [newMessage],
+                ":emptyList": [],
+            },
+            // ReturnValues는 업데이트 후 반환할 데이터를 정의한다.
+            ReturnValues: "UPDATED_NEW",
+        };
+
+        // DynamoDB에 데이터를 업데이트한다.
+        dynamoDB.update(updateParams, (err, data) => {
             if (err) {
-                console.error("Error saving message to DynamoDB", err);
+                console.error("Error updating data in DynamoDB:", err);
             } else {
-                console.log("Message saved to DynamoDB", data);
+                console.log("Data updated successfully:", data);
             }
         });
-
-        // DB에 채팅 메시지 데이터 수정
-
-        // DB에 채팅 메시지 데이터 삭제
     });
 });
+
+// Generate a random message ID
+function generateMessageId() {
+    return crypto.randomBytes(16).toString("hex");
+}
 
 server.listen(3000, () => {
     console.log("SERVER IS RUNNING");
