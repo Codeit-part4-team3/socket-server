@@ -41,7 +41,7 @@ app.get("/admin/messages", (req, res) => {
         },
         // admin 채널의 메시지를 가져오기 위해 channelId를 admin으로 설정한다.
         ExpressionAttributeValues: {
-            ":channelId": "admin",
+            ":channelId": "admin_chat_channel",
         },
     };
     // query메서드를 사용해서 데이터를 가져온다.
@@ -51,6 +51,12 @@ app.get("/admin/messages", (req, res) => {
             res.status(500).send("Error fetching data from DynamoDB");
         } else {
             console.log("Data fetched successfully from DynamoDB:", data);
+            // Set CORS headers
+            res.setHeader("Access-Control-Allow-Origin", "*"); // Allow requests from any origin
+            res.setHeader(
+                "Access-Control-Allow-Methods",
+                "GET, POST, PUT, DELETE"
+            ); // Allow the specified HTTP methods
             res.status(200).send(data.Items); // Send the fetched messages as response
         }
     });
