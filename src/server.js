@@ -25,9 +25,36 @@ app.get("/", (req, res) => {
     res.send("Hello World!");
 });
 
-app.get("/");
-
-console.log("connect express");
+// dynamoDB의 get, query, scan메서드를 이용해서 데이터를 가져올 수 있는데
+// get은 단일 항목을 가져오고
+// query는 쿼리 조건에 맞는 항목을 가져오고
+// scan은 테이블 전체를 가져온다.
+// 따라서 특정 조건을 줘서 데이터를 가져오고 싶을 때는 query를 사용해야한다
+app.get("/admin/messages", (req, res) => {
+    const params = {
+        TableName: "chat-message-table",
+        // #channel이라는 표현식이 :channelId와 같은지 확인한다.
+        KeyConditionExpression: "#channel = :channelId",
+        // channelId가 예약어이기 때문에 ExpressionAttributeNames를 사용해서 예약어를 대체한다.
+        ExpressionAttributeNames: {
+            "#channel": "channelId",
+        },
+        // admin 채널의 메시지를 가져오기 위해 channelId를 admin으로 설정한다.
+        ExpressionAttributeValues: {
+            ":channelId": "admin",
+        },
+    };
+    // query메서드를 사용해서 데이터를 가져온다.
+    dynamoDB.query(params, (err, data) => {
+        if (err) {
+            console.error("Error fetching data from DynamoDB:", err);
+            res.status(500).send("Error fetching data from DynamoDB");
+        } else {
+            console.log("Data fetched successfully from DynamoDB:", data);
+            res.status(200).send(data.Items); // Send the fetched messages as response
+        }
+    });
+});
 
 const pc_config = {
     iceServers: [
