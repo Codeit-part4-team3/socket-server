@@ -242,6 +242,8 @@ io.on("connect", (socket) => {
             status: "normal",
         };
         console.log(newMessage);
+        // roomName에 속한 모든 소켓에게 메시지를 보낸다.(보낸 사람 포함)
+        io.in(roomName).emit("receive_message", newMessage);
 
         const updateParams = {
             // 테이블 이름
@@ -276,29 +278,6 @@ io.on("connect", (socket) => {
                 console.log("Data updated successfully:", data);
             }
         });
-
-        // 업데이트 이후에 새로운 메시지를 다시 가져와서 해당 채널의 모든 클라이언트에게 전달
-        const params = {
-            TableName: "chat-message-table",
-            KeyConditionExpression: "#channel = :channelId",
-            ExpressionAttributeNames: {
-                "#channel": "channelId",
-            },
-            ExpressionAttributeValues: {
-                ":channelId": roomName,
-            },
-        };
-
-        try {
-            const queryResult = await dynamoDB.query(params).promise();
-            const messages = queryResult.Items;
-
-            // 해당 채널의 모든 클라이언트에게 새로운 메시지 전달
-            console.log("newMessageData : ", messages);
-            io.to(roomName).emit("receive_message", messages);
-        } catch (error) {
-            console.error("Error fetching messages from DynamoDB:", error);
-        }
     });
 
     // update Message
