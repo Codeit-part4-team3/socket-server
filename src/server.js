@@ -339,6 +339,6 @@ function generateMessageId() {
     return crypto.randomBytes(16).toString("hex");
 }
 
-server.listen(3001, () => {
+server.listen(3000, () => {
     console.log("SERVER IS RUNNING");
 });
