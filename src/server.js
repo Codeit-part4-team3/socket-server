@@ -1,6 +1,5 @@
 const express = require("express");
 const http = require("http");
-const cors = require("cors");
 const { Server } = require("socket.io");
 const wrtc = require("wrtc");
 const AWS = require("aws-sdk");
@@ -8,7 +7,7 @@ const crypto = require("crypto");
 
 // .DocumentClient를 사용하면 DynamoDB의 데이터를 쉽게 다룰 수 있다. 자동 직렬화 느낌
 const dynamoDB = new AWS.DynamoDB.DocumentClient({
-    // 다이나모DB의 리전을 설정한다
+    // 다이나모DB의 리전을 설정한다(다이나모 DB가 존재하는 지역)
     region: "us-east-2",
 });
 const app = express();
@@ -16,50 +15,13 @@ const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
         // origin은 정확한 클라이언트 주소여야한다.
-        origin: "https://pqsoft.net",
+        origin: ["https://pqsoft.net", "http://localhost:5173"],
         methods: ["GET", "POST", "PUT", "DELETE"],
     },
 });
 
 app.get("/", (req, res) => {
     res.send("Hello World!");
-});
-
-// dynamoDB의 get, query, scan메서드를 이용해서 데이터를 가져올 수 있는데
-// get은 단일 항목을 가져오고
-// query는 쿼리 조건에 맞는 항목을 가져오고
-// scan은 테이블 전체를 가져온다.
-// 따라서 특정 조건을 줘서 데이터를 가져오고 싶을 때는 query를 사용해야한다
-app.get("/admin/messages", (req, res) => {
-    const params = {
-        TableName: "chat-message-table",
-        // #channel이라는 표현식이 :channelId와 같은지 확인한다.
-        KeyConditionExpression: "#channel = :channelId",
-        // channelId가 예약어이기 때문에 ExpressionAttributeNames를 사용해서 예약어를 대체한다.
-        ExpressionAttributeNames: {
-            "#channel": "channelId",
-        },
-        // admin 채널의 메시지를 가져오기 위해 channelId를 admin으로 설정한다.
-        ExpressionAttributeValues: {
-            ":channelId": "admin_chat_channel",
-        },
-    };
-    // query메서드를 사용해서 데이터를 가져온다.
-    dynamoDB.query(params, (err, data) => {
-        if (err) {
-            console.error("Error fetching data from DynamoDB:", err);
-            res.status(500).send("Error fetching data from DynamoDB");
-        } else {
-            console.log("Data fetched successfully from DynamoDB:", data);
-            // Set CORS headers
-            res.setHeader("Access-Control-Allow-Origin", "*"); // Allow requests from any origin
-            res.setHeader(
-                "Access-Control-Allow-Methods",
-                "GET, POST, PUT, DELETE"
-            ); // Allow the specified HTTP methods
-            res.status(200).send(data.Items); // Send the fetched messages as response
-        }
-    });
 });
 
 const pc_config = {
@@ -70,254 +32,305 @@ const pc_config = {
     ],
 };
 
-// rooms.roomName.participants = [id: socket.id, id: socket.id, ...]
-// rooms.roomName.senderPCs[socket.id] = pc
-// rooms.roomName.receiverPCs[socket.id][otherSocket.id] = pc
-// receiverPCs의 socket.id는 받는 사람의 socket.id이고 otherSocket.id는 보내는 사람의 socket.id이다.
+// rooms.roomName.participants = {socketId: socket.id, socketId: socket.id, ...}
+// rooms.roomName.receiverPCs[senderPCId] = pc
+// rooms.roomName.senderPCs[senderPCId][receiverPCId] = pc
+// receiverPCs의 senderPCId는 미디어 스트림을 보내는 socket의 socket.id이고
+// receiverPCId는 미디어 스트림을 받는 socket의 socket.id이다.
 const rooms = {};
-// streams.roomName.socketId = stream
+// streams.roomName.senderPCId = stream
 const streams = {};
 
-io.on("connect", (socket) => {
-    console.log("connect socket");
-    // 음성, 화상 채널 관련 코드
-    socket.on("join_voice_channel", (roomName) => {
-        console.log("join_room : ", roomName);
-        if (!rooms[roomName]) {
-            rooms[roomName] = {
-                senderPCs: {},
-                receiverPCs: {},
-                participants: [],
+io.on("connect", async (socket) => {
+    // 음성 채팅 관련 코드
+    socket.on("join_voice_channel", async ({ roomName }) => {
+        console.log("join_voice_channel : ", roomName);
+        socket.join(roomName);
+
+        // participants에 소켓 아이디를 저장한다.
+        rooms[roomName] = rooms[roomName] || {};
+        rooms[roomName].participants = rooms[roomName].participants || {};
+        rooms[roomName].participants[socket.id] = socket.id;
+
+        for (let senderPCId in streams[roomName]) {
+            // 각 미디어 스트림에 대해 새로운 RTCPeerConnection을 생성
+            const pc = new wrtc.RTCPeerConnection(pc_config);
+
+            // 새로운 RTCPeerConnection을 rooms 객체에 저장
+            rooms[roomName].senderPCs = rooms[roomName].senderPCs || {};
+            rooms[roomName].senderPCs[senderPCId] =
+                rooms[roomName].senderPCs[senderPCId] || {};
+            rooms[roomName].senderPCs[senderPCId][socket.id] = pc;
+
+            // 미디어 스트림을 새로운 RTCPeerConnection에 추가
+            streams[roomName][senderPCId].getTracks().forEach((track) => {
+                pc.addTrack(track, streams[roomName][senderPCId]);
+            });
+
+            // ICE candidate를 수신하면, 이를 다른 클라이언트에게 보냄
+            pc.onicecandidate = ({ candidate }) => {
+                if (candidate) {
+                    socket.emit("existingParticipant_ice_candidate", {
+                        candidate,
+                        senderPCId,
+                    });
+                }
             };
-        }
 
-        const pc = new wrtc.RTCPeerConnection(pc_config);
+            // ice candidate 변경 확인
+            pc.oniceconnectionstatechange = (event) => {};
 
-        pc.onicecandidate = (e) => {
-            if (e.candidate) {
-                socket.emit("ice_candidate_sender", e.candidate);
+            // SDP offer를 생성하고, 이를 이용하여 로컬 설명을 설정
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                // SDP offer를 새로 참가한 클라이언트에게 보냄
+                socket.emit("existingParticipant_offer", {
+                    offer: pc.localDescription,
+                    senderPCId,
+                    roomName,
+                });
+            } catch (error) {
+                console.error(error);
             }
-        };
-
-        pc.ontrack = (e) => {
-            if (!streams[roomName]) {
-                streams[roomName] = {};
-            }
-            streams[roomName][socket.id] = e.streams[0];
-            console.log(streams);
-        };
-
-        if (!rooms[roomName].senderPCs[socket.id]) {
-            rooms[roomName].senderPCs[socket.id] = {};
-        }
-        rooms[roomName].senderPCs[socket.id] = pc;
-        rooms[roomName].participants.push({ id: socket.id });
-    });
-
-    socket.on("offer", async (offer, roomName) => {
-        try {
-            const senderPC = rooms[roomName].senderPCs[socket.id];
-            await senderPC.setRemoteDescription(
-                new wrtc.RTCSessionDescription(offer)
-            );
-            const answer = await senderPC.createAnswer();
-            await senderPC.setLocalDescription(
-                new wrtc.RTCSessionDescription(answer)
-            );
-            socket.emit("answer", answer);
-
-            // Create receiverPCs for other participants in the room
-            for (const participant of rooms[roomName].participants) {
-                const participantId = participant.id;
-                if (participantId === socket.id) continue;
-
-                const receiverPC = new wrtc.RTCPeerConnection(pc_config);
-                receiverPC.onicecandidate = (e) => {
-                    if (e.candidate) {
-                        socket.emit(
-                            "ice_candidate_receiver",
-                            e.candidate,
-                            participantId
-                        );
-                    }
-                };
-
-                // Add tracks to the receiverPC from the corresponding stream
-                if (streams[roomName] && streams[roomName][participantId]) {
-                    streams[roomName][participantId]
-                        .getTracks()
-                        .forEach((track) => {
-                            receiverPC.addTrack(
-                                track,
-                                streams[roomName][participantId]
-                            );
-                        });
-                }
-
-                // Create an offer for the receiverPC and emit it to the participant
-                const receiverOffer = await receiverPC.createOffer();
-                await receiverPC.setLocalDescription(receiverOffer);
-                socket.emit(
-                    "receiver_offer",
-                    receiverOffer,
-                    participantId,
-                    roomName
-                );
-
-                // Store the receiverPC in the data structure
-                if (!rooms[roomName].receiverPCs[socket.id]) {
-                    rooms[roomName].receiverPCs[socket.id] = {};
-                }
-                rooms[roomName].receiverPCs[socket.id][participantId] =
-                    receiverPC;
-            }
-        } catch (error) {
-            console.error("Error handling offer:", error);
-        }
-    });
-
-    socket.on("receiver_answer", async (answer, senderId, roomName) => {
-        try {
-            const receiverPC = rooms[roomName].receiverPCs[socket.id][senderId];
-            await receiverPC.setRemoteDescription(
-                new wrtc.RTCSessionDescription(answer)
-            );
-        } catch (error) {
-            console.error("Error handling receiver answer:", error);
-        }
-    });
-
-    socket.on("ice_candidate_sender", async (candidate, senderId, roomName) => {
-        console.log("ice_candidate_sender : ", candidate);
-        try {
-            if (!rooms[roomName]) {
-                console.error(`Room ${roomName} does not exist.`);
-                return;
-            }
-            const senderPC = rooms[roomName].senderPCs[senderId];
-            await senderPC.addIceCandidate(new wrtc.RTCIceCandidate(candidate));
-        } catch (error) {
-            console.error("Error handling ice candidate for senderPC:", error);
         }
     });
 
     socket.on(
-        "ice_candidate_receiver",
-        async (candidate, receiverId, senderId, roomName) => {
-            try {
-                if (!rooms[roomName]) {
-                    console.error(`Room ${roomName} does not exist.`);
-                    return;
+        "existingParticipant_answer",
+        async ({ answer, receiverPCId, senderPCId, roomName }) => {
+            // Check if receiverPCId is not undefined
+            if (receiverPCId) {
+                const pc = rooms[roomName]?.senderPCs[senderPCId][receiverPCId];
+                if (pc) {
+                    await pc.setRemoteDescription(answer);
+                } else {
+                    console.error(
+                        `RTCPeerConnection not found for receiverPCId: ${receiverPCId}`
+                    );
                 }
-                const receiverPC =
-                    rooms[roomName].receiverPCs[receiverId][senderId];
-                await receiverPC.addIceCandidate(
-                    new wrtc.RTCIceCandidate(candidate)
-                );
-            } catch (error) {
-                console.error(
-                    "Error handling ice candidate for receiverPC:",
-                    error
-                );
+            } else {
+                console.error("receiverPCId is undefined");
+            }
+        }
+    );
+
+    socket.on(
+        "newParticipant_offer",
+        async ({ offer, senderPCId, roomName }) => {
+            // Create RTCPeerConnection
+            const pc = new wrtc.RTCPeerConnection(pc_config);
+
+            rooms[roomName] = rooms[roomName] || {};
+            rooms[roomName].receiverPCs = rooms[roomName].receiverPCs || {};
+
+            // Check if senderPCId is not undefined
+            if (senderPCId) {
+                rooms[roomName].receiverPCs[senderPCId] = pc;
+            } else {
+                console.error("senderPCId is undefined");
+                return;
+            }
+
+            // media stream을 받는다.
+            pc.ontrack = async (event) => {
+                // event.streams[0]은 media stream을 가지고 있다.
+                streams[roomName] = streams[roomName] || {};
+                streams[roomName][senderPCId] = event.streams[0];
+
+                // 참가한 클라이언트의 미디어 스트림을 참여하고 있던 클라이언트들에게 보낸다.
+                // 순회하며 피어 연결을 한다
+                const newParticipantId = socket.id;
+
+                for (let participant in rooms[roomName].participants) {
+                    // 참여한 클라이언트를 제외한 다른 클라이언트에게만 미디어 스트림을 보낸다.
+                    if (participant !== newParticipantId) {
+                        const pc = new wrtc.RTCPeerConnection(pc_config);
+                        rooms[roomName].senderPCs =
+                            rooms[roomName].senderPCs || {};
+                        rooms[roomName].senderPCs[participant] =
+                            rooms[roomName].senderPCs[participant] || {};
+                        rooms[roomName].senderPCs[participant][
+                            newParticipantId
+                        ] = pc;
+
+                        // 미디어 스트림을 새로운 RTCPeerConnection에 추가
+                        event.streams[0].getTracks().forEach((track) => {
+                            pc.addTrack(track, event.streams[0]);
+                        });
+
+                        // ice candidate 핸들러
+                        pc.onicecandidate = ({ candidate }) => {
+                            if (candidate) {
+                                socket
+                                    .to(participant)
+                                    .emit("newParticipant_ice_candidate", {
+                                        candidate,
+                                        senderPCId: newParticipantId,
+                                    });
+                            }
+                        };
+
+                        // ice candidate 변경 확인
+                        pc.oniceconnectionstatechange = (event) => {};
+
+                        // offer 작업
+                        try {
+                            const offer = await pc.createOffer();
+                            await pc.setLocalDescription(offer);
+
+                            // offer를 해당 room에 참여중이던 클라이언트들에게 보냄
+                            socket
+                                .to(participant)
+                                .emit("newParticipant_offer", {
+                                    offer: pc.localDescription,
+                                    senderPCId: newParticipantId,
+                                });
+                        } catch (error) {
+                            console.error(error);
+                        }
+                    }
+                }
+            };
+
+            // Set remote description and create answer
+            await pc.setRemoteDescription(offer);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            // Send answer to the client
+            socket.emit("newParticipant_answer", {
+                answer,
+                senderPCId,
+                roomName,
+            });
+        }
+    );
+
+    socket.on(
+        "newParticipant_answer",
+        async ({ answer, receiverPCId, senderPCId, roomName }) => {
+            // Check if receiverPCId is not undefined
+            rooms[roomName] = rooms[roomName] || {};
+            rooms[roomName].senderPCs = rooms[roomName].senderPCs || {};
+            if (receiverPCId) {
+                const pc = rooms[roomName].senderPCs[receiverPCId][senderPCId];
+                if (pc) {
+                    await pc.setRemoteDescription(answer);
+                } else {
+                    console.error(
+                        `RTCPeerConnection not found for receiverPCId: ${receiverPCId}`
+                    );
+                }
+            } else {
+                console.error("receiverPCId is undefined");
+            }
+        }
+    );
+
+    socket.on(
+        "newParticipant_ice_candidate",
+        async ({ candidate, newParticipantSocketId, roomName }) => {
+            // Check if newParticipantSocketId is not undefined
+            if (newParticipantSocketId) {
+                const pc = rooms[roomName]?.receiverPCs[newParticipantSocketId];
+                if (pc) {
+                    await pc.addIceCandidate(
+                        new wrtc.RTCIceCandidate(candidate)
+                    );
+                } else {
+                    console.error("RTCPeerConnection not found");
+                }
+            } else {
+                console.error("newParticipantSocketId is undefined");
             }
         }
     );
 
     // 채팅 채널 관련 코드
-    socket.on("join_chat_channel", (roomName) => {
+    socket.on("join_chat_channel", async (roomName) => {
+        console.log("join_chat_channel : ", roomName);
         // DB에서 channel 데이터 가져오기
         // DB에서 채팅 메시지 데이터 가져오기
         // 채팅 메시지 소켓으로 보내기
         socket.join(roomName);
+        socket.emit("join_chat_channel_user_join", socket.id);
+
+        // DB에서 해당 채널의 메시지를 가져와서 참가한 소켓에게 보내기
+        const queryParams = {
+            TableName: "chat-channel-table",
+            KeyConditionExpression: "channelId = :channelId",
+            ExpressionAttributeValues: {
+                ":channelId": roomName, // roomName이 ChannelId가 된다.
+            },
+        };
+
+        try {
+            const data = await dynamoDB.query(queryParams).promise();
+            console.log("Messages fetched successfully from DynamoDB:", data);
+            // 방금 참가한 소켓에게만 메시지를 보낸다.
+            const initialMessages = data.Items;
+            io.to(socket.id).emit("initial_chat_messages", initialMessages);
+        } catch (error) {
+            console.error("Error fetching messages from DynamoDB:", error);
+        }
     });
 
+    // interface MessageItem {
+    //     channelId: string;
+    //     messageId: string;
+    //     message: {
+    //       userId: string;
+    //       message: string;
+    //       createdAt: number;
+    //       updatedAt: number;
+    //       status: string; : 'stable' | 'editing
+    //     };
+    //   }
     socket.on("send_message", async (message, roomName) => {
         // 새로운 메시지를 DynamoDB에 업데이트
-        const newMessage = {
-            messageId: generateMessageId(),
-            userId: "1",
-            message: message,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            status: "normal",
+        const messageId = generateMessageId();
+        const newMessageItem = {
+            channelId: roomName, // Use roomName as the channelId
+            messageId: messageId,
+            message: {
+                createdAt: Date.now(),
+                message: message,
+                status: "stable",
+                updatedAt: Date.now(),
+                userId: "1", // Assuming a static userId for now
+            },
         };
-        console.log(newMessage);
+
+        console.log("newMessage:", newMessageItem);
+
         // roomName에 속한 모든 소켓에게 메시지를 보낸다.(보낸 사람 포함)
-        io.in(roomName).emit("receive_message", newMessage);
+        io.in(roomName).emit("receive_message", newMessageItem);
 
-        const updateParams = {
-            // 테이블 이름
-            TableName: "chat-message-table",
-            // channelID을 이용해서 해당 채널의 메시지 리스트에 새로운 메시지를 추가한다.
-            Key: {
-                channelId: roomName,
-            },
-            // updateExpression은 SET으로 업데이트할 데이터를 정의한다.
-            UpdateExpression:
-                // list_append는 DynamoDB에서 제공하는 함수로 리스트에 새로운 요소를 추가한다.
-                // if_not_exists는 DynamoDB에서 제공하는 함수로 해당 속성이 존재하지 않으면
-                // 두 번째 인자로 전달된 값을 사용한다.
-                // :newMessage는 새로운 메시지를 의미한다.
-                "SET messages = list_append(if_not_exists(messages, :emptyList), :newMessage)",
-            // ExpressionAttributeValues는 UpdateExpression에서 사용한 변수들을 정의한다.
-            // :newMessage는 새로운 메시지를 의미한다.
-            // :emptyList는 messages 속성이 존재하지 않을 때 사용할 빈 리스트를 의미한다.
-            ExpressionAttributeValues: {
-                ":newMessage": [newMessage],
-                ":emptyList": [],
-            },
-            // ReturnValues는 업데이트 후 반환할 데이터를 정의한다.
-            ReturnValues: "UPDATED_NEW",
+        const putParams = {
+            TableName: "chat-channel-table", // 테이블 이름
+            Item: newMessageItem, // 새로운 메시지
         };
 
-        // DynamoDB에 데이터를 업데이트한다.
-        dynamoDB.update(updateParams, (err, data) => {
-            if (err) {
-                console.error("Error updating data in DynamoDB:", err);
-            } else {
-                console.log("Data updated successfully:", data);
-            }
-        });
+        console.log("Adding a new message to DynamoDB:", putParams);
+
+        try {
+            const data = await dynamoDB.put(putParams).promise();
+            console.log("Message added successfully to DynamoDB:", data);
+        } catch (error) {
+            console.error("Error adding message to DynamoDB:", error);
+        }
     });
 
     // update Message
     socket.on("update_message", (messageId, roomName) => {
-        // update Message
+        // Logic
     });
 
     // delete Message
     socket.on("delete_message", (messageId, roomName) => {
-        const deleteParams = {
-            TableName: "chat-message-table",
-            Key: {
-                channelId: roomName,
-            },
-            // 업데이트 작업을 정의한다.
-            // messages 목록 속성에서 ?인덱스 요소를 제거한다
-            UpdateExpression: "REMOVE messages[?]",
-            // 삭제 작업이 수행되기 위해 필요한 조건을 정의한다.
-            // 여기서는 messages 속성이 존재하고 messages 목록에 :messageId가 포함되어 있는지 확인한다.
-            ConditionExpression:
-                "attribute_exists(messages) AND list_contains(messages, :messageId)",
-            // Expression들의 :messageId을 정의한다
-            ExpressionAttributeValues: {
-                ":messageId": messageId,
-            },
-        };
-
-        // delete메서드를 안사용한 이유는 delete는 전체 항목(또는 행)를 삭제하려고 할 때 사용하고
-        // update메서드는 항목 내부의 속성을 업데이트하거나 제거할 때 사용할 수 있기 떄문
-        // 우리는 channelId 내보의 messages 속성에서 특정 메시지를 제거하려고 하기 때문에 update메서드를 사용한다.
-        dynamoDB.update(deleteParams, (err, data) => {
-            if (err) {
-                console.error("Error deleting message from DynamoDB:", err);
-            } else {
-                console.log(
-                    "Message deleted successfully from DynamoDB:",
-                    data
-                );
-            }
-        });
+        // Logic
     });
 });
 
