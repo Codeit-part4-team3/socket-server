@@ -4,7 +4,6 @@ const { Server } = require("socket.io");
 const wrtc = require("wrtc");
 const AWS = require("aws-sdk");
 const crypto = require("crypto");
-const { send } = require("process");
 
 // .DocumentClient를 사용하면 DynamoDB의 데이터를 쉽게 다룰 수 있다. 자동 직렬화 느낌
 const dynamoDB = new AWS.DynamoDB.DocumentClient({
@@ -48,6 +47,11 @@ io.on("connect", async (socket) => {
         console.log("join_voice_channel : ", roomName);
         socket.join(roomName);
 
+        // participants에 소켓 아이디를 저장한다.
+        rooms[roomName] = rooms[roomName] || {};
+        rooms[roomName].participants = rooms[roomName].participants || {};
+        rooms[roomName].participants[socket.id] = socket.id;
+
         for (let senderPCId in streams[roomName]) {
             // 각 미디어 스트림에 대해 새로운 RTCPeerConnection을 생성
             const pc = new wrtc.RTCPeerConnection(pc_config);
@@ -57,10 +61,6 @@ io.on("connect", async (socket) => {
             rooms[roomName].senderPCs[senderPCId] =
                 rooms[roomName].senderPCs[senderPCId] || {};
             rooms[roomName].senderPCs[senderPCId][socket.id] = pc;
-
-            console.log(
-                `RTCPeerConnection created for senderPCId: ${senderPCId}`
-            );
 
             // 미디어 스트림을 새로운 RTCPeerConnection에 추가
             streams[roomName][senderPCId].getTracks().forEach((track) => {
@@ -78,9 +78,7 @@ io.on("connect", async (socket) => {
             };
 
             // ice candidate 변경 확인
-            pc.oniceconnectionstatechange = (event) => {
-                console.log("oniceconnectionstatechange event:", event);
-            };
+            pc.oniceconnectionstatechange = (event) => {};
 
             // SDP offer를 생성하고, 이를 이용하여 로컬 설명을 설정
             try {
@@ -102,11 +100,6 @@ io.on("connect", async (socket) => {
     socket.on(
         "existingParticipant_answer",
         async ({ answer, receiverPCId, senderPCId, roomName }) => {
-            console.log(
-                "existingParticipant_answer:",
-                receiverPCId,
-                senderPCId
-            );
             // Check if receiverPCId is not undefined
             if (receiverPCId) {
                 const pc = rooms[roomName]?.senderPCs[senderPCId][receiverPCId];
@@ -141,10 +134,64 @@ io.on("connect", async (socket) => {
             }
 
             // media stream을 받는다.
-            pc.ontrack = (event) => {
+            pc.ontrack = async (event) => {
                 // event.streams[0]은 media stream을 가지고 있다.
                 streams[roomName] = streams[roomName] || {};
                 streams[roomName][senderPCId] = event.streams[0];
+
+                // 참가한 클라이언트의 미디어 스트림을 참여하고 있던 클라이언트들에게 보낸다.
+                // 순회하며 피어 연결을 한다
+                const newParticipantId = socket.id;
+
+                for (let participant in rooms[roomName].participants) {
+                    // 참여한 클라이언트를 제외한 다른 클라이언트에게만 미디어 스트림을 보낸다.
+                    if (participant !== newParticipantId) {
+                        const pc = new wrtc.RTCPeerConnection(pc_config);
+                        rooms[roomName].senderPCs =
+                            rooms[roomName].senderPCs || {};
+                        rooms[roomName].senderPCs[participant] =
+                            rooms[roomName].senderPCs[participant] || {};
+                        rooms[roomName].senderPCs[participant][
+                            newParticipantId
+                        ] = pc;
+
+                        // 미디어 스트림을 새로운 RTCPeerConnection에 추가
+                        event.streams[0].getTracks().forEach((track) => {
+                            pc.addTrack(track, event.streams[0]);
+                        });
+
+                        // ice candidate 핸들러
+                        pc.onicecandidate = ({ candidate }) => {
+                            if (candidate) {
+                                socket
+                                    .to(participant)
+                                    .emit("newParticipant_ice_candidate", {
+                                        candidate,
+                                        senderPCId: newParticipantId,
+                                    });
+                            }
+                        };
+
+                        // ice candidate 변경 확인
+                        pc.oniceconnectionstatechange = (event) => {};
+
+                        // offer 작업
+                        try {
+                            const offer = await pc.createOffer();
+                            await pc.setLocalDescription(offer);
+
+                            // offer를 해당 room에 참여중이던 클라이언트들에게 보냄
+                            socket
+                                .to(participant)
+                                .emit("newParticipant_offer", {
+                                    offer: pc.localDescription,
+                                    senderPCId: newParticipantId,
+                                });
+                        } catch (error) {
+                            console.error(error);
+                        }
+                    }
+                }
             };
 
             // Set remote description and create answer
@@ -158,6 +205,27 @@ io.on("connect", async (socket) => {
                 senderPCId,
                 roomName,
             });
+        }
+    );
+
+    socket.on(
+        "newParticipant_answer",
+        async ({ answer, receiverPCId, senderPCId, roomName }) => {
+            // Check if receiverPCId is not undefined
+            rooms[roomName] = rooms[roomName] || {};
+            rooms[roomName].senderPCs = rooms[roomName].senderPCs || {};
+            if (receiverPCId) {
+                const pc = rooms[roomName].senderPCs[receiverPCId][senderPCId];
+                if (pc) {
+                    await pc.setRemoteDescription(answer);
+                } else {
+                    console.error(
+                        `RTCPeerConnection not found for receiverPCId: ${receiverPCId}`
+                    );
+                }
+            } else {
+                console.error("receiverPCId is undefined");
+            }
         }
     );
 
