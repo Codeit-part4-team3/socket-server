@@ -33,158 +33,84 @@ const pc_config = {
     ],
 };
 
-// rooms.roomName.participants = [id: socket.id, id: socket.id, ...]
-// rooms.roomName.senderPCs[socket.id] = pc
-// rooms.roomName.receiverPCs[socket.id][otherSocket.id] = pc
-// receiverPCs의 socket.id는 받는 사람의 socket.id이고 otherSocket.id는 보내는 사람의 socket.id이다.
+// rooms.roomName.participants = {socketId: socket.id, socketId: socket.id, ...}
+// rooms.roomName.receiverPCs[senderPCId] = pc
+// rooms.roomName.senderPCs[senderPCId][receiverPCId] = pc
+// receiverPCs의 senderPCId는 미디어 스트림을 보내는 socket의 socket.id이고
+// receiverPCId는 미디어 스트림을 받는 socket의 socket.id이다.
 const rooms = {};
 // streams.roomName.socketId = stream
 const streams = {};
 
 io.on("connect", (socket) => {
-    console.log("connect socket");
-    // 음성, 화상 채널 관련 코드
-    socket.on("join_voice_channel", (roomName) => {
-        console.log("join_room : ", roomName);
-        if (!rooms[roomName]) {
-            rooms[roomName] = {
-                senderPCs: {},
-                receiverPCs: {},
-                participants: [],
-            };
-        }
-
-        const pc = new wrtc.RTCPeerConnection(pc_config);
-
-        pc.onicecandidate = (e) => {
-            if (e.candidate) {
-                socket.emit("ice_candidate_sender", e.candidate);
-            }
-        };
-
-        pc.ontrack = (e) => {
-            if (!streams[roomName]) {
-                streams[roomName] = {};
-            }
-            streams[roomName][socket.id] = e.streams[0];
-            console.log(streams);
-        };
-
-        if (!rooms[roomName].senderPCs[socket.id]) {
-            rooms[roomName].senderPCs[socket.id] = {};
-        }
-        rooms[roomName].senderPCs[socket.id] = pc;
-        rooms[roomName].participants.push({ id: socket.id });
+    // 음성 채팅 관련 코드
+    socket.on("join_voice_channel", ({ roomName }) => {
+        console.log("join_voice_channel : ", roomName);
+        socket.join(roomName);
     });
 
-    socket.on("offer", async (offer, roomName) => {
-        try {
-            const senderPC = rooms[roomName].senderPCs[socket.id];
-            await senderPC.setRemoteDescription(
-                new wrtc.RTCSessionDescription(offer)
-            );
-            const answer = await senderPC.createAnswer();
-            await senderPC.setLocalDescription(
-                new wrtc.RTCSessionDescription(answer)
-            );
-            socket.emit("answer", answer);
-
-            // Create receiverPCs for other participants in the room
-            for (const participant of rooms[roomName].participants) {
-                const participantId = participant.id;
-                if (participantId === socket.id) continue;
-
-                const receiverPC = new wrtc.RTCPeerConnection(pc_config);
-                receiverPC.onicecandidate = (e) => {
-                    if (e.candidate) {
-                        socket.emit(
-                            "ice_candidate_receiver",
-                            e.candidate,
-                            participantId
-                        );
-                    }
-                };
-
-                // Add tracks to the receiverPC from the corresponding stream
-                if (streams[roomName] && streams[roomName][participantId]) {
-                    streams[roomName][participantId]
-                        .getTracks()
-                        .forEach((track) => {
-                            receiverPC.addTrack(
-                                track,
-                                streams[roomName][participantId]
-                            );
-                        });
-                }
-
-                // Create an offer for the receiverPC and emit it to the participant
-                const receiverOffer = await receiverPC.createOffer();
-                await receiverPC.setLocalDescription(receiverOffer);
-                socket.emit(
-                    "receiver_offer",
-                    receiverOffer,
-                    participantId,
-                    roomName
-                );
-
-                // Store the receiverPC in the data structure
-                if (!rooms[roomName].receiverPCs[socket.id]) {
-                    rooms[roomName].receiverPCs[socket.id] = {};
-                }
-                rooms[roomName].receiverPCs[socket.id][participantId] =
-                    receiverPC;
-            }
-        } catch (error) {
-            console.error("Error handling offer:", error);
-        }
-    });
-
-    socket.on("receiver_answer", async (answer, senderId, roomName) => {
-        try {
-            const receiverPC = rooms[roomName].receiverPCs[socket.id][senderId];
-            await receiverPC.setRemoteDescription(
-                new wrtc.RTCSessionDescription(answer)
-            );
-        } catch (error) {
-            console.error("Error handling receiver answer:", error);
-        }
-    });
-
-    socket.on("ice_candidate_sender", async (candidate, senderId, roomName) => {
-        console.log("ice_candidate_sender : ", candidate);
-        try {
-            if (!rooms[roomName]) {
-                console.error(`Room ${roomName} does not exist.`);
-                return;
-            }
-            const senderPC = rooms[roomName].senderPCs[senderId];
-            await senderPC.addIceCandidate(new wrtc.RTCIceCandidate(candidate));
-        } catch (error) {
-            console.error("Error handling ice candidate for senderPC:", error);
-        }
-    });
+    // ... 기타 코드
 
     socket.on(
-        "ice_candidate_receiver",
-        async (candidate, receiverId, senderId, roomName) => {
-            try {
-                if (!rooms[roomName]) {
-                    console.error(`Room ${roomName} does not exist.`);
-                    return;
+        "newParticipant_offer",
+        async ({ offer, senderPCId, roomName }) => {
+            // Create RTCPeerConnection
+            const pc = new wrtc.RTCPeerConnection(pc_config);
+
+            rooms[roomName] = rooms[roomName] || {};
+            rooms[roomName].receiverPCs = rooms[roomName].receiverPCs || {};
+
+            // Check if senderPCId is not undefined
+            if (senderPCId) {
+                rooms[roomName].receiverPCs[senderPCId] = pc;
+            } else {
+                console.error("senderPCId is undefined");
+                return;
+            }
+
+            // media stream을 받는다.
+            pc.ontrack = (event) => {
+                console.log("ontrack event:", event);
+                // event.streams[0]은 media stream을 가지고 있다.
+                streams[roomName] = streams[roomName] || {};
+                streams[roomName][senderPCId] = event.streams[0];
+                console.log("streams:", streams);
+            };
+
+            // Set remote description and create answer
+            await pc.setRemoteDescription(offer);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            // Send answer to the client
+            socket.emit("newParticipant_answer", {
+                answer,
+                senderPCId,
+                roomName,
+            });
+        }
+    );
+
+    socket.on(
+        "newParticipant_ice_candidate",
+        async ({ candidate, newParticipantSocketId, roomName }) => {
+            // Check if newParticipantSocketId is not undefined
+            if (newParticipantSocketId) {
+                const pc = rooms[roomName]?.receiverPCs[newParticipantSocketId];
+                if (pc) {
+                    await pc.addIceCandidate(
+                        new wrtc.RTCIceCandidate(candidate)
+                    );
+                } else {
+                    console.error("RTCPeerConnection not found");
                 }
-                const receiverPC =
-                    rooms[roomName].receiverPCs[receiverId][senderId];
-                await receiverPC.addIceCandidate(
-                    new wrtc.RTCIceCandidate(candidate)
-                );
-            } catch (error) {
-                console.error(
-                    "Error handling ice candidate for receiverPC:",
-                    error
-                );
+            } else {
+                console.error("newParticipantSocketId is undefined");
             }
         }
     );
+
+    // ... 나머지 코드
 
     // 채팅 채널 관련 코드
     socket.on("join_chat_channel", async (roomName) => {
@@ -277,6 +203,6 @@ function generateMessageId() {
     return crypto.randomBytes(16).toString("hex");
 }
 
-server.listen(3000, () => {
+server.listen(3001, () => {
     console.log("SERVER IS RUNNING");
 });
