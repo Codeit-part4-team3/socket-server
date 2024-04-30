@@ -1,10 +1,10 @@
 const express = require("express");
 const http = require("http");
-const cors = require("cors");
 const { Server } = require("socket.io");
 const wrtc = require("wrtc");
 const AWS = require("aws-sdk");
 const crypto = require("crypto");
+const { send } = require("process");
 
 // .DocumentClient를 사용하면 DynamoDB의 데이터를 쉽게 다룰 수 있다. 자동 직렬화 느낌
 const dynamoDB = new AWS.DynamoDB.DocumentClient({
@@ -39,17 +39,89 @@ const pc_config = {
 // receiverPCs의 senderPCId는 미디어 스트림을 보내는 socket의 socket.id이고
 // receiverPCId는 미디어 스트림을 받는 socket의 socket.id이다.
 const rooms = {};
-// streams.roomName.socketId = stream
+// streams.roomName.senderPCId = stream
 const streams = {};
 
-io.on("connect", (socket) => {
+io.on("connect", async (socket) => {
     // 음성 채팅 관련 코드
-    socket.on("join_voice_channel", ({ roomName }) => {
+    socket.on("join_voice_channel", async ({ roomName }) => {
         console.log("join_voice_channel : ", roomName);
         socket.join(roomName);
+
+        for (let senderPCId in streams[roomName]) {
+            // 각 미디어 스트림에 대해 새로운 RTCPeerConnection을 생성
+            const pc = new wrtc.RTCPeerConnection(pc_config);
+
+            // 새로운 RTCPeerConnection을 rooms 객체에 저장
+            rooms[roomName].senderPCs = rooms[roomName].senderPCs || {};
+            rooms[roomName].senderPCs[senderPCId] =
+                rooms[roomName].senderPCs[senderPCId] || {};
+            rooms[roomName].senderPCs[senderPCId][socket.id] = pc;
+
+            console.log(
+                `RTCPeerConnection created for senderPCId: ${senderPCId}`
+            );
+
+            // 미디어 스트림을 새로운 RTCPeerConnection에 추가
+            streams[roomName][senderPCId].getTracks().forEach((track) => {
+                pc.addTrack(track, streams[roomName][senderPCId]);
+            });
+
+            // ICE candidate를 수신하면, 이를 다른 클라이언트에게 보냄
+            pc.onicecandidate = ({ candidate }) => {
+                if (candidate) {
+                    socket.emit("existingParticipant_ice_candidate", {
+                        candidate,
+                        senderPCId,
+                    });
+                }
+            };
+
+            // ice candidate 변경 확인
+            pc.oniceconnectionstatechange = (event) => {
+                console.log("oniceconnectionstatechange event:", event);
+            };
+
+            // SDP offer를 생성하고, 이를 이용하여 로컬 설명을 설정
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                // SDP offer를 새로 참가한 클라이언트에게 보냄
+                socket.emit("existingParticipant_offer", {
+                    offer: pc.localDescription,
+                    senderPCId,
+                    roomName,
+                });
+            } catch (error) {
+                console.error(error);
+            }
+        }
     });
 
-    // ... 기타 코드
+    socket.on(
+        "existingParticipant_answer",
+        async ({ answer, receiverPCId, senderPCId, roomName }) => {
+            console.log(
+                "existingParticipant_answer:",
+                receiverPCId,
+                senderPCId
+            );
+            // Check if receiverPCId is not undefined
+            if (receiverPCId) {
+                const pc = rooms[roomName]?.senderPCs[senderPCId][receiverPCId];
+                if (pc) {
+                    await pc.setRemoteDescription(answer);
+                } else {
+                    console.error(
+                        `RTCPeerConnection not found for receiverPCId: ${receiverPCId}`
+                    );
+                }
+            } else {
+                console.error("receiverPCId is undefined");
+            }
+        }
+    );
 
     socket.on(
         "newParticipant_offer",
@@ -70,11 +142,9 @@ io.on("connect", (socket) => {
 
             // media stream을 받는다.
             pc.ontrack = (event) => {
-                console.log("ontrack event:", event);
                 // event.streams[0]은 media stream을 가지고 있다.
                 streams[roomName] = streams[roomName] || {};
                 streams[roomName][senderPCId] = event.streams[0];
-                console.log("streams:", streams);
             };
 
             // Set remote description and create answer
@@ -109,8 +179,6 @@ io.on("connect", (socket) => {
             }
         }
     );
-
-    // ... 나머지 코드
 
     // 채팅 채널 관련 코드
     socket.on("join_chat_channel", async (roomName) => {
