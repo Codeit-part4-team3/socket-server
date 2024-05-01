@@ -27,7 +27,9 @@ app.get("/", (req, res) => {
 const pc_config = {
     iceServers: [
         {
-            urls: ["stun:stun.l.google.com:19302"],
+            urls: ["turn:54.180.127.213:3478"],
+            username: "codeit", // 사용자 이름(username) 설정
+            credential: "sprint101!", // 비밀번호(password) 설정
         },
     ],
 };
