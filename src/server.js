@@ -301,7 +301,7 @@ io.on("connect", async (socket) => {
     //       status: string; : 'stable' | 'editing
     //     };
     //   }
-    socket.on("send_message", async (message, roomName) => {
+    socket.on("send_message", async ({ message, roomName, userId }) => {
         // 새로운 메시지를 DynamoDB에 업데이트
         const messageId = generateMessageId();
         const newMessageItem = {
@@ -309,7 +309,7 @@ io.on("connect", async (socket) => {
             createdAt: Date.now(),
             messageId: messageId,
             message: message,
-            userId: "1", // Assuming a static userId for now
+            userId: userId, // Assuming a static userId for now
             updatedAt: Date.now(),
             status: "stable",
         };
@@ -371,9 +371,11 @@ io.on("connect", async (socket) => {
             // 무한 스크롤을 위해 마지막 키를 저장한다.
             console.log("Messages fetched successfully from DynamoDB:", data);
             const moreMessages = data.Items;
+            const isNoMoreMessages = data.LastEvaluatedKey ? false : true;
             io.to(socket.id).emit("more_messages", {
                 moreMessages,
                 lastKey: data.LastEvaluatedKey,
+                isNoMoreMessages,
             });
         } catch (error) {
             console.error("Error fetching messages from DynamoDB:", error);
