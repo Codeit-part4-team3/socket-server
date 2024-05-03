@@ -260,20 +260,31 @@ io.on("connect", async (socket) => {
         socket.emit("join_chat_channel_user_join", socket.id);
 
         // DB에서 해당 채널의 메시지를 가져와서 참가한 소켓에게 보내기
+        // gsi를 이용해서 메시지를 createdAt을 기준으로 정렬해서 가져온다.
         const queryParams = {
-            TableName: "chat-channel-table",
+            TableName: "pq-chat-channel-table",
             KeyConditionExpression: "channelId = :channelId",
             ExpressionAttributeValues: {
-                ":channelId": roomName, // roomName이 ChannelId가 된다.
+                ":channelId": roomName,
             },
+            // scanIndexForward를 false로 설정하면 내림차순으로 정렬된다.
+            ScanIndexForward: false,
+            // limit의 개수만큼 가져온다
+            Limit: 5,
         };
 
+        // DynamoDB에서 기존 채팅 메시지를 가져온다.
         try {
             const data = await dynamoDB.query(queryParams).promise();
+            console.log("lastKey:", data.LastEvaluatedKey);
+            // 무한 스크롤을 위해 마지막 키를 저장한다.
             console.log("Messages fetched successfully from DynamoDB:", data);
             // 방금 참가한 소켓에게만 메시지를 보낸다.
             const initialMessages = data.Items;
-            io.to(socket.id).emit("initial_chat_messages", initialMessages);
+            io.to(socket.id).emit("initial_chat_messages", {
+                initialMessages,
+                lastKey: data.LastEvaluatedKey,
+            });
         } catch (error) {
             console.error("Error fetching messages from DynamoDB:", error);
         }
@@ -295,14 +306,12 @@ io.on("connect", async (socket) => {
         const messageId = generateMessageId();
         const newMessageItem = {
             channelId: roomName, // Use roomName as the channelId
+            createdAt: Date.now(),
             messageId: messageId,
-            message: {
-                createdAt: Date.now(),
-                message: message,
-                status: "stable",
-                updatedAt: Date.now(),
-                userId: "1", // Assuming a static userId for now
-            },
+            message: message,
+            userId: "1", // Assuming a static userId for now
+            updatedAt: Date.now(),
+            status: "stable",
         };
 
         console.log("newMessage:", newMessageItem);
@@ -311,7 +320,7 @@ io.on("connect", async (socket) => {
         io.in(roomName).emit("receive_message", newMessageItem);
 
         const putParams = {
-            TableName: "chat-channel-table", // 테이블 이름
+            TableName: "pq-chat-channel-table", // 테이블 이름
             Item: newMessageItem, // 새로운 메시지
         };
 
@@ -319,6 +328,7 @@ io.on("connect", async (socket) => {
 
         try {
             const data = await dynamoDB.put(putParams).promise();
+            console.log("lastKey:", data.LastEvaluatedKey);
             console.log("Message added successfully to DynamoDB:", data);
         } catch (error) {
             console.error("Error adding message to DynamoDB:", error);
@@ -333,6 +343,41 @@ io.on("connect", async (socket) => {
     // delete Message
     socket.on("delete_message", (messageId, roomName) => {
         // Logic
+    });
+
+    // infinite scroll
+    socket.on("more_messages", async ({ roomName, userSocketId, lastKey }) => {
+        console.log("more_messages : ", roomName, userSocketId, lastKey);
+
+        // gsi를 이용해서 메시지를 createdAt을 기준으로 정렬해서 가져온다.
+        const queryParams = {
+            TableName: "pq-chat-channel-table",
+            KeyConditionExpression: "channelId = :channelId",
+            ExpressionAttributeValues: {
+                ":channelId": roomName,
+            },
+            // scanIndexForward를 false로 설정하면 내림차순으로 정렬된다.
+            ScanIndexForward: false,
+            // limit의 개수만큼 가져온다
+            Limit: 5,
+        };
+
+        if (lastKey) {
+            queryParams.ExclusiveStartKey = lastKey;
+        }
+
+        try {
+            const data = await dynamoDB.query(queryParams).promise();
+            // 무한 스크롤을 위해 마지막 키를 저장한다.
+            console.log("Messages fetched successfully from DynamoDB:", data);
+            const moreMessages = data.Items;
+            io.to(socket.id).emit("more_messages", {
+                moreMessages,
+                lastKey: data.LastEvaluatedKey,
+            });
+        } catch (error) {
+            console.error("Error fetching messages from DynamoDB:", error);
+        }
     });
 });
 
