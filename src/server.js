@@ -112,6 +112,17 @@ io.on("connect", async (socket) => {
         }
     );
 
+    socket.on(
+        "video_track_enabled_changed",
+        ({ enabled, userSocketId, roomName }) => {
+            // roomName에 있는 자신을 제외한 모든 소켓에게 enabled가 변경된 소켓의 정보를 보낸다.
+            socket.broadcast.to(roomName).emit("video_track_enabled_changed", {
+                enabled,
+                userSocketId,
+            });
+        }
+    );
+
     socket.on("disconnect", ({ roomName }) => {
         console.log("disconnect : ", socket.id, " is disconnected");
         let room = rooms[roomName];
