@@ -1,7 +1,6 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
-const wrtc = require("wrtc");
 const AWS = require("aws-sdk");
 const crypto = require("crypto");
 
@@ -37,20 +36,12 @@ const pc_config = {
     ],
 };
 
-// SFU 방식
-// // rooms.roomName.participants = {socketId: socket.id, socketId: socket.id, ...}
-// // rooms.roomName.receiverPCs[senderPCId] = pc
-// // rooms.roomName.senderPCs[senderPCId][receiverPCId] = pc
-// // receiverPCs의 senderPCId는 미디어 스트림을 보내는 socket의 socket.id이고
-// // receiverPCId는 미디어 스트림을 받는 socket의 socket.id이다.
-// const rooms = {};
-// // streams.roomName.senderPCId = stream
-// const streams = {};
-
 // P2P 방식
-// rooms.roomName = [{socketId: socket.id, userId: userId}, {socketId: socket.id, userId: userId}, ...]
+// rooms[roomName] : [{socketId: socket.id, userId: userId}, {socketId: socket.id, userId: userId}, ...]
 // userId가 아닌 socket.id를 식별자로 사용하자
 let rooms = {};
+// socketRoom[socket.id] : roomName
+let socketRoom = {};
 const maximumParticipants = 4;
 
 io.on("connect", async (socket) => {
@@ -66,6 +57,8 @@ io.on("connect", async (socket) => {
             return;
         }
         rooms[roomName].push({ socketId: socket.id, userId });
+        socketRoom[socket.id] = roomName;
+        console.log("socketRoom : ", socketRoom);
         socket.join(roomName);
 
         // roomName에 있는 방금 참여한 참가자를 제외한 참가자들을 가져와서 보낸다
@@ -123,18 +116,15 @@ io.on("connect", async (socket) => {
         }
     );
 
-    socket.on("disconnect", ({ roomName }) => {
-        console.log("disconnect : ", socket.id, " is disconnected");
-        let room = rooms[roomName];
-        if (room) {
-            rooms[roomName] = room.filter(
-                (participant) => participant.socketId !== socket.id
-            );
-            if (rooms[roomName].length === 0) {
-                delete rooms[roomName];
-            }
-        }
-        socket.to(roomName).emit("user_exit", { socketId: socket.id });
+    socket.on("disconnect", () => {
+        console.log("disconnect : ", socket.id);
+        const exitSocketId = socket.id;
+        const roomName = socketRoom[exitSocketId];
+        // rooms에서 socket.id를 제거한다.
+        rooms[roomName] = rooms[roomName].filter((participant) => {
+            return participant.socketId !== exitSocketId;
+        });
+        socket.to(roomName).emit("user_exit", { exitSocketId });
     });
 
     // 채팅 채널 관련 코드
@@ -157,7 +147,7 @@ io.on("connect", async (socket) => {
             // scanIndexForward를 false로 설정하면 내림차순으로 정렬된다.
             ScanIndexForward: false,
             // limit의 개수만큼 가져온다
-            Limit: 5,
+            Limit: 40,
         };
 
         // DynamoDB에서 기존 채팅 메시지를 가져온다.
@@ -246,7 +236,7 @@ io.on("connect", async (socket) => {
             // scanIndexForward를 false로 설정하면 내림차순으로 정렬된다.
             ScanIndexForward: false,
             // limit의 개수만큼 가져온다
-            Limit: 5,
+            Limit: 40,
         };
 
         if (lastKey) {
