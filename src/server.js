@@ -200,10 +200,74 @@ io.on("connect", async (socket) => {
         }
     });
 
-    // update Message
-    socket.on("update_message", async ({ messageId, roomName }) => {
-        // Logic
-    });
+    /**@ToDo message가 editing인 상태 구현해야함 */
+    // // update Message 상태를 editing으로 변경
+    // socket.on(
+    //     "update_message_editing",
+    //     async ({ messageId, createdAt, roomName }) => {
+    //         console.log("update_message : ", messageId, createdAt, roomName);
+    //     }
+    // );
+
+    // update Message 수정 완료
+    socket.on(
+        "update_message_complete",
+        async ({ messageId, createdAt, message, roomName }) => {
+            console.log("update_message : ", messageId, message, roomName);
+
+            // First, use the GSI to get the item
+            const getParams = {
+                TableName: "pq-chat-channel-table",
+                IndexName: "messageId-createdAt-index",
+                KeyConditionExpression:
+                    "messageId = :messageId and createdAt = :createdAt",
+                ExpressionAttributeValues: {
+                    ":messageId": messageId,
+                    ":createdAt": createdAt,
+                },
+            };
+
+            try {
+                const data = await dynamoDB.query(getParams).promise();
+
+                console.log(data);
+
+                if (data.Items && data.Items.length > 0) {
+                    const messageItem = data.Items[0];
+
+                    // Then, update the message
+                    const updateParams = {
+                        TableName: "pq-chat-channel-table",
+                        Key: {
+                            channelId: messageItem.channelId,
+                            createdAt: messageItem.createdAt,
+                        },
+                        UpdateExpression: "set #message = :message",
+                        ExpressionAttributeNames: {
+                            "#message": "message",
+                        },
+                        ExpressionAttributeValues: {
+                            ":message": message,
+                        },
+                        ReturnValues: "UPDATED_NEW",
+                    };
+
+                    await dynamoDB.update(updateParams).promise();
+                }
+                io.in(roomName).emit("update_message_complete", {
+                    messageId,
+                    message,
+                });
+            } catch (error) {
+                console.error("Error updating message: ", error);
+            }
+        }
+    );
+
+    // // update Message 취소
+    // socket.on("update_message_cancel", async ({ messageId, roomName }) => {
+    //     console.log("update_message : ", messageId, roomName);
+    // });
 
     // delete Message
     // gsi를 이용해서 바로 삭제가 불가능하기 때문에
