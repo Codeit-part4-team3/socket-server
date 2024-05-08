@@ -23,19 +23,6 @@ app.get("/", (req, res) => {
     res.send("Hello World!");
 });
 
-const pc_config = {
-    iceServers: [
-        {
-            urls: ["stun:stun.l.google.com:19302"],
-        },
-        // {
-        //     urls: ["turn:54.180.127.213:3478"],
-        //     username: "codeit", // 사용자 이름(username) 설정
-        //     credential: "sprint101!", // 비밀번호(password) 설정
-        // },
-    ],
-};
-
 // P2P 방식
 // rooms[roomName] : [{socketId: socket.id, userId: userId}, {socketId: socket.id, userId: userId}, ...]
 // userId가 아닌 socket.id를 식별자로 사용하자
@@ -47,6 +34,7 @@ const maximumParticipants = 4;
 io.on("connect", async (socket) => {
     // 음성, 화상 채널 관련 코드
     socket.on("join_voice_channel", ({ roomName, userId }) => {
+        // rommName에 해당하는 room 없으면 생성
         if (!rooms[roomName]) {
             rooms[roomName] = [];
         }
@@ -58,7 +46,6 @@ io.on("connect", async (socket) => {
         }
         rooms[roomName].push({ socketId: socket.id, userId });
         socketRoom[socket.id] = roomName;
-        console.log("socketRoom : ", socketRoom);
         socket.join(roomName);
 
         // roomName에 있는 방금 참여한 참가자를 제외한 참가자들을 가져와서 보낸다
@@ -117,6 +104,7 @@ io.on("connect", async (socket) => {
     );
 
     socket.on("disconnect", () => {
+        if (!socketRoom[socket.id]) return;
         console.log("disconnect : ", socket.id);
         const exitSocketId = socket.id;
         const roomName = socketRoom[exitSocketId];
@@ -213,13 +201,50 @@ io.on("connect", async (socket) => {
     });
 
     // update Message
-    socket.on("update_message", (messageId, roomName) => {
+    socket.on("update_message", async ({ messageId, roomName }) => {
         // Logic
     });
 
     // delete Message
-    socket.on("delete_message", (messageId, roomName) => {
-        // Logic
+    // gsi를 이용해서 바로 삭제가 불가능하기 때문에
+    // messageId와 createdAt로 해당 메시지를 DB에서 가지고 오고 해당 메시지의 정보를 이용해 찾고 삭제해야한다
+    socket.on("delete_message", async ({ messageId, createdAt, roomName }) => {
+        console.log("delete_message : ", messageId, createdAt, roomName);
+
+        // First, use the GSI to get the item
+        const getParams = {
+            TableName: "pq-chat-channel-table",
+            IndexName: "messageId-createdAt-index",
+            KeyConditionExpression:
+                "messageId = :messageId and createdAt = :createdAt",
+            ExpressionAttributeValues: {
+                ":messageId": messageId,
+                ":createdAt": createdAt,
+            },
+        };
+
+        try {
+            const response = await dynamoDB.query(getParams).promise();
+            const item = response.Items[0];
+
+            // Then, use the primary key of the item to delete it
+            const deleteParams = {
+                TableName: "pq-chat-channel-table",
+                Key: {
+                    channelId: item.channelId,
+                    createdAt: item.createdAt,
+                },
+            };
+
+            await dynamoDB.delete(deleteParams).promise();
+            console.log(
+                "Message deleted successfully from DynamoDB:",
+                messageId
+            );
+            io.in(roomName).emit("delete_message", messageId);
+        } catch (error) {
+            console.error("Error deleting message from DynamoDB:", error);
+        }
     });
 
     // infinite scroll
