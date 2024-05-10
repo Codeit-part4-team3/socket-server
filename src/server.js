@@ -24,7 +24,7 @@ app.get("/", (req, res) => {
 });
 
 // P2P 방식
-// rooms[roomName] : [{socketId: socket.id, userId: userId}, {socketId: socket.id, userId: userId}, ...]
+// rooms[roomName] : [{socketId: socket.id, userId: userId, userNickname: userNickname}, {socketId: socket.id, userId: userId, userNickname:userNickname}, ...]
 // userId가 아닌 socket.id를 식별자로 사용하자
 let rooms = {};
 // socketRoom[socket.id] : roomName
@@ -33,7 +33,7 @@ const maximumParticipants = 4;
 
 io.on("connect", async (socket) => {
     // 음성, 화상 채널 관련 코드
-    socket.on("join_voice_channel", ({ roomName, userId }) => {
+    socket.on("join_voice_channel", ({ roomName, userId, userNickname }) => {
         // rommName에 해당하는 room 없으면 생성
         if (!rooms[roomName]) {
             rooms[roomName] = [];
@@ -44,7 +44,7 @@ io.on("connect", async (socket) => {
             socket.emit("room_full");
             return;
         }
-        rooms[roomName].push({ socketId: socket.id, userId });
+        rooms[roomName].push({ socketId: socket.id, userId, userNickname });
         socketRoom[socket.id] = roomName;
         socket.join(roomName);
 
@@ -62,11 +62,13 @@ io.on("connect", async (socket) => {
             sdp,
             offerSenderSocketId,
             offerSenderId,
+            offerSenderNickname,
             offerReceiverSocketId,
         }) => {
             socket.to(offerReceiverSocketId).emit("get_offer", {
                 sdp,
                 offerSenderSocketId,
+                offerSenderNickname,
                 offerSenderId,
             });
         }
@@ -105,14 +107,16 @@ io.on("connect", async (socket) => {
 
     socket.on("disconnect", () => {
         if (!socketRoom[socket.id]) return;
-        console.log("disconnect : ", socket.id);
         const exitSocketId = socket.id;
         const roomName = socketRoom[exitSocketId];
         // rooms에서 socket.id를 제거한다.
         rooms[roomName] = rooms[roomName].filter((participant) => {
             return participant.socketId !== exitSocketId;
         });
+        // socketRoom에서 socket.id를 제거한다.
+        delete socketRoom[exitSocketId];
         socket.to(roomName).emit("user_exit", { exitSocketId });
+        console.log("disconnect : ", socket.id);
     });
 
     // 채팅 채널 관련 코드
