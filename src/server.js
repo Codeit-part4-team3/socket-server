@@ -45,7 +45,6 @@ let socketRoom = {};
 const maximumParticipants = 4;
 
 io.on("connect", async (socket) => {
-  x;
   // 알림을 위한 socket.join
   socket.on("join", (room) => {
     socket.join(room);
