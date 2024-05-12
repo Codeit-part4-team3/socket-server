@@ -32,6 +32,11 @@ let socketRoom = {};
 const maximumParticipants = 4;
 
 io.on("connect", async (socket) => {
+    // 알림을 위한 socket.join
+    socket.on("join", (room) => {
+        socket.join(room);
+    });
+
     // 음성, 화상 채널 관련 코드
     socket.on("join_voice_channel", ({ roomName, userId, userNickname }) => {
         // rommName에 해당하는 room 없으면 생성
