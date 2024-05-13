@@ -407,6 +407,35 @@ io.on('connect', async (socket) => {
     } catch (error) {
       console.error('Error fetching messages from DynamoDB:', error);
     }
+    if (lastKey) {
+      queryParams.ExclusiveStartKey = lastKey;
+    }
+
+    try {
+      const data = await dynamoDB.query(queryParams).promise();
+      // 무한 스크롤을 위해 마지막 키를 저장한다.
+      console.log('Messages fetched successfully from DynamoDB:', data);
+      const moreMessages = data.Items;
+      const isNoMoreMessages = data.LastEvaluatedKey ? false : true;
+      io.to(socket.id).emit('more_messages', {
+        moreMessages,
+        lastKey: data.LastEvaluatedKey,
+        isNoMoreMessages,
+      });
+    } catch (error) {
+      console.error('Error fetching messages from DynamoDB:', error);
+    }
+  });
+
+  // Toast 실시간 알림
+  socket.on('send_toast', (message) => {
+    io.emit('receive_toast', message);
+  });
+
+  // 이벤트 실시간 상태 공유
+  // 이벤트 종료 후 즉시 사용자의 결제를 막기위함
+  socket.on('update_event_status', (status) => {
+    io.emit('event_status', status);
   });
 });
 
