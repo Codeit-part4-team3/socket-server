@@ -166,6 +166,8 @@ io.on('connect', async (socket) => {
   // 회의록 종료
   socket.on('end_meeting_note', ({ roomName }) => {
     io.in(roomName).emit('end_meeting_note');
+    // 회의록을 업데이트 한다
+    io.in(roomName).emit('get_meeting_note_list');
   });
 
   socket.on('disconnect', () => {
