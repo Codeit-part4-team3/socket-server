@@ -3,7 +3,6 @@ const http = require('http');
 const { Server } = require('socket.io');
 const AWS = require('aws-sdk');
 const crypto = require('crypto');
-const { read } = require('fs');
 
 // .DocumentClient를 사용하면 DynamoDB의 데이터를 쉽게 다룰 수 있다. 자동 직렬화 느낌
 const dynamoDB = new AWS.DynamoDB.DocumentClient({
@@ -89,6 +88,84 @@ io.on('connect', async (socket) => {
       enabled,
       userSocketId,
     });
+  });
+
+  // 회의록 관련 코드
+  // 회의록 시작
+  socket.on('start_meeting_note', async ({ roomName, meetingNoteName }) => {
+    console.log('start_meeting_note : ', roomName, meetingNoteName);
+    const meetingNoteId = generateMeetingNoteId();
+    // // 회의록 DB에 생성
+    // {
+    //   id: string;
+    //   channelId:string;
+    //   createdAt:number;
+    //   name: string;
+    //   content:[
+    //   {
+    //       userId:number;
+    //       text:string
+    //   },
+    //   ...
+    // }
+    // const newMeetingNote = {
+    //   id: meetingNoteId,
+    //   channelId: roomName,
+    //   createdAt: Date.now(),
+    //   name: meetingNoteName,
+    //   content: [],
+    // };
+
+    // const putParams = {
+    //   TableName: 'pq-meeting-note-table', // 테이블 이름
+    //   Item: newMeetingNote, // 새로운 회의록
+    // };
+    // console.log('Adding a new meetingNote to DynamoDB:', putParams);
+
+    try {
+      // const data = await dynamoDB.put(putParams).promise();
+      // console.log('meetingNote added successfully to DynamoDB:', data);
+      io.in(roomName).emit('start_meeting_note', { meetingNoteId });
+    } catch (error) {
+      console.error('Error adding meetingNote to DynamoDB:', error);
+    }
+  });
+
+  // 회의록 내용 업데이트
+  socket.on('update_meeting_note', async ({ roomName, meetingNoteId, transcript, userId }) => {
+    console.log('update_meeting_note : ', transcript, meetingNoteId, userId);
+
+    // // 실시간으로 DB에 저장하는 로직
+    // const updateParams = {
+    //   TableName: 'YourTableName', // 테이블 이름
+    //   Key: {
+    //     id: meetingNoteId,
+    //     channelId: roomName,
+    //   },
+    //   UpdateExpression: 'SET #content = list_append(if_not_exists(#content, :empty_list), :new_content)',
+    //   ExpressionAttributeNames: {
+    //     '#content': 'content',
+    //   },
+    //   ExpressionAttributeValues: {
+    //     ':new_content': [{ userId, text: transcript }],
+    //     ':empty_list': [],
+    //   },
+    //   ReturnValues: 'UPDATED_NEW',
+    // };
+
+    // try {
+    //   const data = await dynamoDB.update(updateParams).promise();
+    //   console.log('meetingNote updated successfully in DynamoDB:', data);
+    // } catch (error) {
+    //   console.error('Error updating meetingNote in DynamoDB:', error);
+    // }
+
+    socket.to(roomName).emit('update_meeting_note', { transcript, userId });
+  });
+
+  // 회의록 종료
+  socket.on('end_meeting_note', ({ roomName }) => {
+    io.in(roomName).emit('end_meeting_note');
   });
 
   socket.on('disconnect', () => {
@@ -447,6 +524,10 @@ io.on('connect', async (socket) => {
 
 // Generate a random message ID
 function generateMessageId() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function generateMeetingNoteId() {
   return crypto.randomBytes(16).toString('hex');
 }
 
