@@ -95,7 +95,7 @@ io.on('connect', async (socket) => {
   socket.on('start_meeting_note', async ({ roomName, meetingNoteName }) => {
     console.log('start_meeting_note : ', roomName, meetingNoteName);
     const meetingNoteId = generateMeetingNoteId();
-    // // 회의록 DB에 생성
+    // 회의록 DB에 생성
     // {
     //   id: string;
     //   channelId:string;
@@ -108,23 +108,23 @@ io.on('connect', async (socket) => {
     //   },
     //   ...
     // }
-    // const newMeetingNote = {
-    //   id: meetingNoteId,
-    //   channelId: roomName,
-    //   createdAt: Date.now(),
-    //   name: meetingNoteName,
-    //   content: [],
-    // };
+    const newMeetingNote = {
+      id: meetingNoteId,
+      channelId: roomName,
+      createdAt: Date.now(),
+      name: meetingNoteName,
+      content: [],
+    };
 
-    // const putParams = {
-    //   TableName: 'pq-meeting-note-table', // 테이블 이름
-    //   Item: newMeetingNote, // 새로운 회의록
-    // };
-    // console.log('Adding a new meetingNote to DynamoDB:', putParams);
+    const putParams = {
+      TableName: 'pq-meeting-note-table', // 테이블 이름
+      Item: newMeetingNote, // 새로운 회의록
+    };
+    console.log('Adding a new meetingNote to DynamoDB:', putParams);
 
     try {
-      // const data = await dynamoDB.put(putParams).promise();
-      // console.log('meetingNote added successfully to DynamoDB:', data);
+      const data = await dynamoDB.put(putParams).promise();
+      console.log('meetingNote added successfully to DynamoDB:', data);
       io.in(roomName).emit('start_meeting_note', { meetingNoteId });
     } catch (error) {
       console.error('Error adding meetingNote to DynamoDB:', error);
@@ -134,33 +134,33 @@ io.on('connect', async (socket) => {
   // 회의록 내용 업데이트
   socket.on('update_meeting_note', async ({ roomName, meetingNoteId, transcript, userId }) => {
     console.log('update_meeting_note : ', transcript, meetingNoteId, userId);
-
-    // // 실시간으로 DB에 저장하는 로직
-    // const updateParams = {
-    //   TableName: 'YourTableName', // 테이블 이름
-    //   Key: {
-    //     id: meetingNoteId,
-    //     channelId: roomName,
-    //   },
-    //   UpdateExpression: 'SET #content = list_append(if_not_exists(#content, :empty_list), :new_content)',
-    //   ExpressionAttributeNames: {
-    //     '#content': 'content',
-    //   },
-    //   ExpressionAttributeValues: {
-    //     ':new_content': [{ userId, text: transcript }],
-    //     ':empty_list': [],
-    //   },
-    //   ReturnValues: 'UPDATED_NEW',
-    // };
-
-    // try {
-    //   const data = await dynamoDB.update(updateParams).promise();
-    //   console.log('meetingNote updated successfully in DynamoDB:', data);
-    // } catch (error) {
-    //   console.error('Error updating meetingNote in DynamoDB:', error);
-    // }
-
+    // roomName에 있는 모든 소켓에게 업데이트된 회의록 내용을 보낸다.
     socket.to(roomName).emit('update_meeting_note', { transcript, userId });
+
+    // 실시간으로 DB에 저장하는 로직
+    const updateParams = {
+      TableName: 'pq-meeting-note-table', // 테이블 이름
+      Key: {
+        id: meetingNoteId,
+        channelId: roomName,
+      },
+      UpdateExpression: 'SET #content = list_append(if_not_exists(#content, :empty_list), :new_content)',
+      ExpressionAttributeNames: {
+        '#content': 'content',
+      },
+      ExpressionAttributeValues: {
+        ':new_content': [{ userId, text: transcript }],
+        ':empty_list': [],
+      },
+      ReturnValues: 'UPDATED_NEW',
+    };
+
+    try {
+      const data = await dynamoDB.update(updateParams).promise();
+      console.log('meetingNote updated successfully in DynamoDB:', data);
+    } catch (error) {
+      console.error('Error updating meetingNote in DynamoDB:', error);
+    }
   });
 
   // 회의록 종료
