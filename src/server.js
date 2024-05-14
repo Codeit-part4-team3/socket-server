@@ -147,21 +147,15 @@ io.on('connect', async (socket) => {
       // 안 읽은 메시지 계산
       const readMsgData = await dynamoDB.query(readQueryParams).promise();
       data.Items = data.Items.map((item) => {
-        const counts = readMsgData.Items.reduce(
-          (acc, readMsgItem) => {
-            if (item.messageId === readMsgItem.messageId) {
-              acc.foundMatch = true;
-            } else if (!acc.foundMatch) {
-              acc.notReadCount++;
-            }
-            return acc;
-          },
-          { notReadCount: 0, foundMatch: false },
-        );
+        let count = 0;
+        readMsgData.Items.forEach((readMsg) => {
+          if (readMsg.messageId !== item.messageId) ++count;
+        });
+        readMsgData.Items = readMsgData.Items.filter((readMsg) => readMsg.messageId !== item.messageId);
 
         return {
           ...item,
-          notReadCount: counts.notReadCount,
+          notReadCount: count,
         };
       });
 
@@ -190,6 +184,17 @@ io.on('connect', async (socket) => {
   socket.on('send_message', async ({ message, roomName, userId }) => {
     // 새로운 메시지를 DynamoDB에 업데이트
     const messageId = generateMessageId();
+
+    const getParams = {
+      TableName: 'pq-chat-readmsg-table',
+      KeyConditionExpression: 'channelId = :channelId',
+      ExpressionAttributeValues: {
+        ':channelId': roomName,
+      },
+    };
+    const channelData = await dynamoDB.query(getParams).promise();
+    const userItems = channelData.Items;
+
     const newMessageItem = {
       channelId: roomName, // Use roomName as the channelId
       createdAt: Date.now(),
@@ -198,6 +203,7 @@ io.on('connect', async (socket) => {
       userId: userId, // Assuming a static userId for now
       updatedAt: Date.now(),
       status: 'stable',
+      notReadCount: userItems ? userItems.length : 0,
     };
 
     console.log('newMessage:', newMessageItem);
