@@ -109,8 +109,8 @@ io.on('connect', async (socket) => {
     //   ...
     // }
     const newMeetingNote = {
-      id: meetingNoteId,
       channelId: roomName,
+      id: meetingNoteId,
       createdAt: Date.now(),
       name: meetingNoteName,
       content: [],
@@ -180,6 +180,30 @@ io.on('connect', async (socket) => {
     delete socketRoom[exitSocketId];
     socket.to(roomName).emit('user_exit', { exitSocketId });
     console.log('disconnect : ', socket.id);
+  });
+
+  // 회의록 목록 가져오기
+  socket.on('get_meeting_note_list', async ({ roomName }) => {
+    // gsi를 이용해서 메시지를 createdAt을 기준으로 정렬해서 가져온다.
+    const queryParams = {
+      TableName: 'pq-meeting-note-table',
+      IndexName: 'channelId-createdAt-index',
+      KeyConditionExpression: 'channelId = :channelId',
+      ExpressionAttributeValues: {
+        ':channelId': roomName,
+      },
+      // scanIndexForward를 false로 설정하면 내림차순으로 정렬된다.
+      ScanIndexForward: false,
+    };
+
+    try {
+      const data = await dynamoDB.query(queryParams).promise();
+      console.log('Meeting notes fetched successfully from DynamoDB:', data);
+      const meetingNoteList = data.Items;
+      socket.emit('get_meeting_note_list', { meetingNoteList });
+    } catch (error) {
+      console.error('Error fetching meeting notes from DynamoDB:', error);
+    }
   });
 
   // 채팅 채널 관련 코드
