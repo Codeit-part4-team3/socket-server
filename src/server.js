@@ -51,6 +51,7 @@ io.on('connect', async (socket) => {
     }
     rooms[roomName].push({ socketId: socket.id, userId, userNickname });
     socketRoom[socket.id] = roomName;
+    socket.join(roomName);
 
     // roomName에 있는 방금 참여한 참가자를 제외한 참가자들을 가져와서 보낸다
     const participants = rooms[roomName].filter((participant) => participant.socketId !== socket.id);
@@ -374,6 +375,7 @@ io.on('connect', async (socket) => {
         channelId: roomName,
         userId: userId,
       };
+      console.log('좋버그 EMIT_READ_MESSAGE');
       io.in(roomName).emit('read_message', response);
     } catch (error) {
       console.error('Error access readmsg table in DynamoDB:', error);
