@@ -502,15 +502,6 @@ io.on('connect', async (socket) => {
       Limit: 40,
     };
 
-    // 가장 마지막 메시지 id를 가져온다.
-    const readQueryParams = {
-      TableName: 'pq-chat-readmsg-table',
-      KeyConditionExpression: 'channelId = :channelId',
-      ExpressionAttributeValues: {
-        ':channelId': roomName,
-      },
-    };
-
     if (lastKey) {
       queryParams.ExclusiveStartKey = lastKey;
     }
@@ -521,17 +512,10 @@ io.on('connect', async (socket) => {
       console.log('Messages fetched successfully from DynamoDB:', data);
 
       // 안 읽은 메시지 계산
-      const readMsgData = await dynamoDB.query(readQueryParams).promise();
       data.Items = data.Items.map((item) => {
-        let count = 0;
-        readMsgData.Items.forEach((readMsg) => {
-          if (readMsg.messageId !== item.messageId) ++count;
-        });
-        readMsgData.Items = readMsgData.Items.filter((readMsg) => readMsg.messageId !== item.messageId);
-
         return {
           ...item,
-          notReadCount: count,
+          notReadCount: 0,
         };
       });
 
