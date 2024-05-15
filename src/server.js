@@ -3,7 +3,6 @@ const http = require('http');
 const { Server } = require('socket.io');
 const AWS = require('aws-sdk');
 const crypto = require('crypto');
-const { read } = require('fs');
 
 // .DocumentClient를 사용하면 DynamoDB의 데이터를 쉽게 다룰 수 있다. 자동 직렬화 느낌
 const dynamoDB = new AWS.DynamoDB.DocumentClient({
@@ -91,6 +90,86 @@ io.on('connect', async (socket) => {
     });
   });
 
+  // 회의록 관련 코드
+  // 회의록 시작
+  socket.on('start_meeting_note', async ({ roomName, meetingNoteName }) => {
+    console.log('start_meeting_note : ', roomName, meetingNoteName);
+    const meetingNoteId = generateMeetingNoteId();
+    // 회의록 DB에 생성
+    // {
+    //   id: string;
+    //   channelId:string;
+    //   createdAt:number;
+    //   name: string;
+    //   content:[
+    //   {
+    //       userId:number;
+    //       text:string
+    //   },
+    //   ...
+    // }
+    const newMeetingNote = {
+      channelId: roomName,
+      id: meetingNoteId,
+      createdAt: Date.now(),
+      name: meetingNoteName,
+      content: [],
+    };
+
+    const putParams = {
+      TableName: 'pq-meeting-note-table', // 테이블 이름
+      Item: newMeetingNote, // 새로운 회의록
+    };
+    console.log('Adding a new meetingNote to DynamoDB:', putParams);
+
+    try {
+      const data = await dynamoDB.put(putParams).promise();
+      console.log('meetingNote added successfully to DynamoDB:', data);
+      io.in(roomName).emit('start_meeting_note', { meetingNoteId });
+    } catch (error) {
+      console.error('Error adding meetingNote to DynamoDB:', error);
+    }
+  });
+
+  // 회의록 내용 업데이트
+  socket.on('update_meeting_note', async ({ roomName, meetingNoteId, transcript, userId }) => {
+    console.log('update_meeting_note : ', transcript, meetingNoteId, userId);
+    // roomName에 있는 모든 소켓에게 업데이트된 회의록 내용을 보낸다.
+    socket.to(roomName).emit('update_meeting_note', { transcript, userId });
+
+    // 실시간으로 DB에 저장하는 로직
+    const updateParams = {
+      TableName: 'pq-meeting-note-table', // 테이블 이름
+      Key: {
+        id: meetingNoteId,
+        channelId: roomName,
+      },
+      UpdateExpression: 'SET #content = list_append(if_not_exists(#content, :empty_list), :new_content)',
+      ExpressionAttributeNames: {
+        '#content': 'content',
+      },
+      ExpressionAttributeValues: {
+        ':new_content': [{ userId, text: transcript }],
+        ':empty_list': [],
+      },
+      ReturnValues: 'UPDATED_NEW',
+    };
+
+    try {
+      const data = await dynamoDB.update(updateParams).promise();
+      console.log('meetingNote updated successfully in DynamoDB:', data);
+    } catch (error) {
+      console.error('Error updating meetingNote in DynamoDB:', error);
+    }
+  });
+
+  // 회의록 종료
+  socket.on('end_meeting_note', ({ roomName }) => {
+    io.in(roomName).emit('end_meeting_note');
+    // 회의록을 업데이트 한다
+    io.in(roomName).emit('get_meeting_note_list');
+  });
+
   socket.on('disconnect', () => {
     if (!socketRoom[socket.id]) return;
     const exitSocketId = socket.id;
@@ -103,6 +182,30 @@ io.on('connect', async (socket) => {
     delete socketRoom[exitSocketId];
     socket.to(roomName).emit('user_exit', { exitSocketId });
     console.log('disconnect : ', socket.id);
+  });
+
+  // 회의록 목록 가져오기
+  socket.on('get_meeting_note_list', async ({ roomName }) => {
+    // gsi를 이용해서 메시지를 createdAt을 기준으로 정렬해서 가져온다.
+    const queryParams = {
+      TableName: 'pq-meeting-note-table',
+      IndexName: 'channelId-createdAt-index',
+      KeyConditionExpression: 'channelId = :channelId',
+      ExpressionAttributeValues: {
+        ':channelId': roomName,
+      },
+      // scanIndexForward를 false로 설정하면 내림차순으로 정렬된다.
+      ScanIndexForward: false,
+    };
+
+    try {
+      const data = await dynamoDB.query(queryParams).promise();
+      console.log('Meeting notes fetched successfully from DynamoDB:', data);
+      const meetingNoteList = data.Items;
+      socket.emit('get_meeting_note_list', { meetingNoteList });
+    } catch (error) {
+      console.error('Error fetching meeting notes from DynamoDB:', error);
+    }
   });
 
   // 채팅 채널 관련 코드
@@ -447,6 +550,10 @@ io.on('connect', async (socket) => {
 
 // Generate a random message ID
 function generateMessageId() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function generateMeetingNoteId() {
   return crypto.randomBytes(16).toString('hex');
 }
 
