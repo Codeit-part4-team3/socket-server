@@ -51,7 +51,6 @@ io.on('connect', async (socket) => {
     }
     rooms[roomName].push({ socketId: socket.id, userId, userNickname });
     socketRoom[socket.id] = roomName;
-    socket.join(roomName);
 
     // roomName에 있는 방금 참여한 참가자를 제외한 참가자들을 가져와서 보낸다
     const participants = rooms[roomName].filter((participant) => participant.socketId !== socket.id);
@@ -181,6 +180,9 @@ io.on('connect', async (socket) => {
     // socketRoom에서 socket.id를 제거한다.
     delete socketRoom[exitSocketId];
     socket.to(roomName).emit('user_exit', { exitSocketId });
+
+    // socket.leave
+    socket.leave(roomName);
     console.log('disconnect : ', socket.id);
   });
 
