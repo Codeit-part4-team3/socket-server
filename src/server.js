@@ -7,7 +7,7 @@ const crypto = require('crypto');
 // .DocumentClient를 사용하면 DynamoDB의 데이터를 쉽게 다룰 수 있다. 자동 직렬화 느낌
 const dynamoDB = new AWS.DynamoDB.DocumentClient({
   // 다이나모DB의 리전을 설정한다(다이나모 DB가 존재하는 지역)
-  region: 'ap-northeast-2',
+  region: 'ap-northeast-1',
 });
 const app = express();
 const server = http.createServer(app);
@@ -181,6 +181,9 @@ io.on('connect', async (socket) => {
     // socketRoom에서 socket.id를 제거한다.
     delete socketRoom[exitSocketId];
     socket.to(roomName).emit('user_exit', { exitSocketId });
+
+    // socket.leave
+    socket.leave(roomName);
     console.log('disconnect : ', socket.id);
   });
 
@@ -372,6 +375,7 @@ io.on('connect', async (socket) => {
         channelId: roomName,
         userId: userId,
       };
+      console.log('좋버그 EMIT_READ_MESSAGE');
       io.in(roomName).emit('read_message', response);
     } catch (error) {
       console.error('Error access readmsg table in DynamoDB:', error);
